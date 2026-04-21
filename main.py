@@ -3,6 +3,8 @@ import os
 import sys
 import asyncio
 import re
+import subprocess
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Set
@@ -26,16 +28,18 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Config:
     token: str
+    path_to_m3u: Optional[Path]
     downloads_path: Path
-    checkpoints_path: Path
     whitelist_chat_ids: Set[int]
 
 def load_config() -> Config:
     try:
+        p_env = os.environ.get("M3U_PLAYLIST_PATH")
+
         return Config(
             token=os.environ["TELEGRAM_BOT_TOKEN"],
+            path_to_m3u=Path(p_env) if p_env else None,
             downloads_path=Path(os.environ["DOWNLOADS_DIR_PATH"]),
-            checkpoints_path=Path(os.environ["CHECKPOINTS_DIR_PATH"]),
             whitelist_chat_ids=set(map(int, os.environ["WHITELIST_CHAT_IDS"].split(","))),
         )
     except KeyError as e:
@@ -126,11 +130,60 @@ class HerEchoBot:
             await self.app.stop()
             await self.app.shutdown()
 
+# --- Beets Logic ---
+def run_beets_update():
+    logger.info("Running beets update to sync with beetsdb")
+    subprocess.run(["beet", "update"], check=True)
+
+def run_beets_import(downloads_path: Path):
+    logger.info("Running beets import")
+    subprocess.run(["beet", "import", "-qs", downloads_path], check=True)
+
+def run_beets_duplicates():
+    logger.info("Running beets duplicates clean up")
+    subprocess.run(["beet", "duplicates", "-d"], check=True)
+
+def get_added_tracks(start_time: str) -> list[Path]:
+    query = f"added:{start_time}.."
+    output = subprocess.run(
+            ["beet", "ls", "-f", "$path", query],
+            text=True,
+            check=True,
+            capture_output=True
+    )
+    return [Path(path) for path in output.stdout.splitlines()]
+
+def update_playlist(path_to_m3u: Path, track_paths: list[Path]):
+    logger.info(f"Updating playlist {path_to_m3u}")
+
+    path_to_m3u.parent.mkdir(parents=True, exist_ok=True)
+    # Check if the file is empty or doesn't exist to add the header
+    write_header = not path_to_m3u.exists() or path_to_m3u.stat().st_size == 0
+    with open(path_to_m3u, "a", encoding="utf-8") as f:
+        if write_header:
+            f.write("#EXTM3U\n")
+        for track_path in track_paths:
+            relative_path = os.path.relpath(track_path, start=path_to_m3u.parent)
+            f.write(f"{relative_path}\n")
+    
+def add_tracks_to_playlist(path_to_m3u: Path, start_time: str):
+    track_paths = get_added_tracks(start_time)
+    update_playlist(path_to_m3u, track_paths)
+    
 # --- Main ---
 async def main():
+    start_time = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+
     config = load_config()
     bot = HerEchoBot(config)
     await bot.execute_once()
+
+    if any(config.downloads_path.iterdir()):
+        run_beets_update()
+        run_beets_import(config.downloads_path)
+        run_beets_duplicates()
+        if config.path_to_m3u:
+            add_tracks_to_playlist(config.path_to_m3u, start_time)
 
 if __name__ == "__main__":
     asyncio.run(main())
