@@ -169,7 +169,13 @@ def update_playlist(path_to_m3u: Path, track_paths: list[Path]):
 def add_tracks_to_playlist(path_to_m3u: Path, start_time: str):
     track_paths = get_added_tracks(start_time)
     update_playlist(path_to_m3u, track_paths)
-    
+
+def clean_downloads(downloads_path: Path):
+    logger.info(f"Cleaning up downloads in {downloads_path}")
+    for file in downloads_path.iterdir():
+        if file.is_file():
+            file.unlink()
+
 # --- Main ---
 async def main():
     start_time = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
@@ -184,6 +190,10 @@ async def main():
         run_beets_duplicates()
         if config.path_to_m3u:
             add_tracks_to_playlist(config.path_to_m3u, start_time)
+
+    if any(config.downloads_path.iterdir()):
+        clean_downloads(config.downloads_path)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
