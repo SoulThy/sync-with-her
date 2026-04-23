@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Set
+from typing import Set, Optional
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -139,19 +139,27 @@ def run_beets_import(downloads_path: Path):
     logger.info("Running beets import")
     subprocess.run(["beet", "import", "-qs", downloads_path], check=True)
 
-def run_beets_duplicates():
-    logger.info("Running beets duplicates clean up")
-    subprocess.run(["beet", "duplicates", "-d"], check=True)
-
-def get_added_tracks(start_time: str) -> list[Path]:
+def get_added_tracks_info(start_time: str) -> list[dict]:
     query = f"added:{start_time}.."
     output = subprocess.run(
-            ["beet", "ls", "-f", "$path", query],
+            ["beet", "ls", "-f", "$id\t$artist\t$title\t$path", query],
             text=True,
             check=True,
             capture_output=True
     )
-    return [Path(path) for path in output.stdout.splitlines()]
+
+    tracks_info = []
+    for line in output.stdout.splitlines():
+        if "\t" in line:
+            t_id, artist, title, path = line.split("\t", 3)
+            tracks_info.append({
+                "id": t_id, 
+                "artist": artist,
+                "title": title, 
+                "path": path
+            })
+
+    return tracks_info
 
 def update_playlist(path_to_m3u: Path, track_paths: list[Path]):
     logger.info(f"Updating playlist {path_to_m3u}")
@@ -167,8 +175,32 @@ def update_playlist(path_to_m3u: Path, track_paths: list[Path]):
             f.write(f"{relative_path}\n")
     
 def add_tracks_to_playlist(path_to_m3u: Path, start_time: str):
-    track_paths = get_added_tracks(start_time)
+    track_info = get_added_tracks_info(start_time)
+    track_paths = [Path(track["path"]) for track in track_info]
+
     update_playlist(path_to_m3u, track_paths)
+
+def remove_duplicates(start_time: str):
+    logger.info("Removing duplicate tracks, leaving the oldest")
+
+    tracks_info = get_added_tracks_info(start_time)
+    recent_tracks = set((track["artist"], track["title"]) for track in tracks_info)
+
+    for artist, title in recent_tracks:
+        output = subprocess.run(
+                     ["beet", "ls", "-f", "$id", f"artist:{artist}", f"title:{title}", "added+"],
+                     text=True,
+                     check=True,
+                     capture_output=True
+        )
+        track_ids = output.stdout.splitlines()
+
+        for duplicate_id in track_ids[1:]:
+            logger.info(f"Removing duplicate ID {duplicate_id} ({artist} - {title})")
+            subprocess.run(
+                ["beet", "rm", "-d", "-f", f"id:{duplicate_id}"], 
+                check=True
+            )
 
 def clean_downloads(downloads_path: Path):
     logger.info(f"Cleaning up downloads in {downloads_path}")
@@ -187,7 +219,7 @@ async def main():
     if any(config.downloads_path.iterdir()):
         run_beets_update()
         run_beets_import(config.downloads_path)
-        run_beets_duplicates()
+        remove_duplicates(start_time)
         if config.path_to_m3u:
             add_tracks_to_playlist(config.path_to_m3u, start_time)
 

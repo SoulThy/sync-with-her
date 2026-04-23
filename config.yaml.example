@@ -1,7 +1,7 @@
 # This is a reccomended configuration file for beets.
 # Change directory and library paths to your own.
 # Place this in ~/.config/beets/config.yaml
-
+#
 directory: /mnt/HDD2TB/Music
 library: /mnt/HDD2TB/Music/musiclibrary.db
 
@@ -15,13 +15,8 @@ match:
     medium_rec_thresh: 0.50
 
 plugins:
-  - chroma
-  - spotify
-  - deezer
-  - fromfilename
-  - duplicates
+    - chroma
+    - spotify
+    - deezer
+    - fromfilename
 
-duplicates:
-    keys: [artist, title]
-    tiebreak:
-        items: [bitrate]  # Choose the order of items to break ties.
