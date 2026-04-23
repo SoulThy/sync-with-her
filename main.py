@@ -133,7 +133,7 @@ class HerEchoBot:
 # --- Beets Logic ---
 def run_beets_update():
     logger.info("Running beets update to sync with beetsdb")
-    subprocess.run(["beet", "update"], check=True)
+    subprocess.run(["beet", "update"], check=False, capture_output=True)
 
 def run_beets_import(downloads_path: Path):
     logger.info("Running beets import")
@@ -217,11 +217,11 @@ async def main():
     await bot.execute_once()
 
     if any(config.downloads_path.iterdir()):
+        run_beets_update()
         run_beets_import(config.downloads_path)
         remove_duplicates(start_time)
         if config.path_to_m3u:
             add_tracks_to_playlist(config.path_to_m3u, start_time)
-        run_beets_update()
 
     if any(config.downloads_path.iterdir()):
         clean_downloads(config.downloads_path)
